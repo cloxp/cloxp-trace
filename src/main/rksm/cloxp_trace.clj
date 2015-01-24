@@ -41,6 +41,29 @@
      val#)
   )
 
+(defn captures->json
+  [& {:keys [nss], :or {nss :all}}]
+  (let [records (if (= nss :all) (vals @capture-records)
+                  (filter #(some #{(-> % :ns str)} nss) (vals @capture-records)))
+        massage-data (fn [r]
+                       (-> r
+                         (assoc :last-val (first (get @storage (:id r) [])))
+                         (dissoc :form)
+                         (update-in [:ns] str)))]
+    (->> records
+      (map massage-data)
+      json/write-str
+      )))
+
+(comment
+
+ (captures->json :nss ["user"])
+
+ (captures->json :nss :all)
+  @capture-records
+  @storage
+  
+ )
 ; -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
 
 (defn linerized-tree-zip
@@ -79,7 +102,9 @@
   [id]
   (if-let [spec (get @capture-records id)]
     (if (:form spec)
-      (eval-form (:form spec) (:ns spec))
+      (do
+        (eval-form (:form spec) (:ns spec))
+        (swap! capture-records dissoc id))
       (throw (Exception. (str "cannot uninstall " id ", no form!"))))
     (throw (Exception. (str "cannot uninstall " id ", no capture record!")))))
 
@@ -88,12 +113,16 @@
   (reset-storage!)
   (reset-capture-records!))
 
+
+; -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+
 (comment
 
- 
- (let [form '(defn foo [x](+ 23 x))]
-   (map z/node (linerized-tree-zip form))
-  (tfm-for-capture-at "foo" 0 form)
-   )
-
+ (install-capture! '(defn foo [] (Math/round (* 100 (rand)))) :ns *ns* :ast-idx 4 :name "foo")
+ (foo)
+ (await-captures)
+ (get @capture-records "foo-4")
+ (require '[clojure.data.json :as json])
+ (rksm.cloxp-trace/captures->json)
+ (str "foooo" (clojure.repl/pst (try (rksm.cloxp-trace/captures->json) (catch Exception e e)) 20))
  )

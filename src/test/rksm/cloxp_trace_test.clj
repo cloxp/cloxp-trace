@@ -41,6 +41,7 @@
       (t/uninstall-capture! (:id spec))
       (is (= 23 (eval '(def-for-capture 3))))
       (is (= {} (t/await-captures)))
+      (is (= {} @t/capture-records))
       ))
   
   )
