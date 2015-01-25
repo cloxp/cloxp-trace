@@ -1,5 +1,6 @@
 (ns rksm.cloxp-trace
-  (:require [clojure.zip :as z]))
+  (:require [clojure.zip :as z])
+  (:require [clojure.data.json :as json]))
 
 
 (def capture-records (atom {}))
@@ -7,6 +8,13 @@
 (defn reset-capture-records!
   []
   (reset! capture-records {}))
+
+(defn add-capture-record!
+  [form {name :name, idx :ast-idx, ns :ns, :as spec}]
+  (let [id (str ns "/" name "-" idx)
+        id-spec (assoc spec :id id :form form)]
+    (swap! capture-records assoc id id-spec)
+    id-spec))
 
 ; -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
 
@@ -47,7 +55,7 @@
                   (filter #(some #{(-> % :ns str)} nss) (vals @capture-records)))
         massage-data (fn [r]
                        (-> r
-                         (assoc :last-val (first (get @storage (:id r) [])))
+                         (assoc :last-val (str (first (get @storage (:id r) []))))
                          (dissoc :form)
                          (update-in [:ns] str)))]
     (->> records
@@ -66,35 +74,45 @@
  )
 ; -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
 
-(defn linerized-tree-zip
-  [form]
-  (let [zppd (z/seq-zip form)]
-    (take-while 
-     (complement z/end?)
-     (iterate z/next zppd))))
-
-(defn tfm-for-capture
-  [form {:keys [ast-idx id] :as opts}]
-  (if-let [at-idx (nth (linerized-tree-zip form) ast-idx nil)]
-    (z/root (z/edit at-idx (fn [n] `(capture ~id ~n))))))
-
-(defn add-capture-record!
-  [form {name :name, idx :ast-idx, :as spec}]
-  (let [id (str name "-" idx)
-        id-spec (assoc spec :id id :form form)]
-    (swap! capture-records assoc id id-spec)
-    id-spec))
 
 (defn eval-form
-  [form ns]
-  (binding [*ns* ns]
-    (eval form)))
+  [form ns & [existing add-meta]]
+  (let [m (merge-with (comp distinct concat)
+                      (if existing (meta existing) {})
+                      (or add-meta {}))
+        new-def (binding [*ns* ns] (eval form))]
+    (alter-meta! new-def merge m)))
+
+(defn find-existing-def
+  [spec]
+  (find-var (symbol (str (:ns spec)) (str (:name spec)))))
+
+(defn re-install-on-redef
+  [spec]
+  (if-let [v (find-existing-def spec)]
+    (add-watch v :cloxp-capture-reinstall (fn [k r o n]
+                                            [k (meta r) o n]
+                                            k
+                                            )))
+  )
+
+(defn tfm-for-capture
+  [form ids-and-idxs]
+  (tfm/insert-captures-into-expr form ids-and-idxs))
 
 (defn install-capture!
-  [form & {ns :ns, :as spec}]
-  (let [spec-with-id (add-capture-record! form spec)
-        traced-form (tfm-for-capture form spec-with-id)]
-    (eval-form traced-form ns)
+  [form & {ns :ns, name :name, :as spec}]
+  (let [
+        spec-with-id (add-capture-record! form spec)
+        records-for-form (vals (filter #(-> % val
+                                          (select-keys [:ns :name])
+                                          (= {:ns ns :name name}))
+                                       @capture-records))
+        ids-and-idxs (map (fn [{:keys [id ast-idx]}] [id ast-idx]) records-for-form)
+        traced-form (tfm-for-capture form ids-and-idxs)
+        existing (find-existing-def spec-with-id)]
+    (eval-form traced-form ns existing {::capturing [(:id spec-with-id)]})
+    (re-install-on-redef spec-with-id)
     spec-with-id
     ))
 
@@ -103,7 +121,7 @@
   (if-let [spec (get @capture-records id)]
     (if (:form spec)
       (do
-        (eval-form (:form spec) (:ns spec))
+        (eval-form (:form spec) (:ns spec) (find-existing-def spec))
         (swap! capture-records dissoc id))
       (throw (Exception. (str "cannot uninstall " id ", no form!"))))
     (throw (Exception. (str "cannot uninstall " id ", no capture record!")))))
@@ -119,10 +137,11 @@
 (comment
 
  (install-capture! '(defn foo [] (Math/round (* 100 (rand)))) :ns *ns* :ast-idx 4 :name "foo")
+ (defn foo [] (Math/round (* 100 (rand))))
  (foo)
  (await-captures)
  (get @capture-records "foo-4")
- (require '[clojure.data.json :as json])
+
  (rksm.cloxp-trace/captures->json)
  (str "foooo" (clojure.repl/pst (try (rksm.cloxp-trace/captures->json) (catch Exception e e)) 20))
  )
