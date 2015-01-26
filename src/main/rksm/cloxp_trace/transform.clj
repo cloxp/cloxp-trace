@@ -1,13 +1,14 @@
 (ns rksm.cloxp-trace.transform
   (:require [clojure.zip :as z])
+  (:require [clojure.pprint :refer :all])
   (:import (clojure.lang IPersistentVector IPersistentMap IPersistentList ISeq)))
 
 ; Thx @ Alex Miller! http://www.ibm.com/developerworks/library/j-treevisit/
 
 (defmulti tree-branch? class)
 (defmethod tree-branch? :default [_] false)
-(defmethod tree-branch? IPersistentVector [v] true)
-(defmethod tree-branch? IPersistentMap [m] true)
+(defmethod tree-branch? IPersistentVector [v] (not-empty v))
+(defmethod tree-branch? IPersistentMap [m] (not-empty m))
 (defmethod tree-branch? IPersistentList [l] true)
 (defmethod tree-branch? ISeq [s] true)
 (prefer-method tree-branch? IPersistentList ISeq)
@@ -33,8 +34,17 @@
 (defn tree-zipper [node]
   (z/zipper tree-branch? tree-children tree-make-node node))
 
-
 ; -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+
+(defn print-tree
+  "for debugging"
+  [node]
+  (let [all (take-while (complement z/end?) (iterate z/next (tree-zipper node)))]
+    (binding [*print-right-margin* 20] 
+     (pprint
+      (->> all
+        (map z/node) (zipmap (range))
+        sort)))))
 
 (defn tfm-visit
   [zippd i ids-and-idxs]
@@ -70,4 +80,20 @@
 (comment
  (insert-captures-into-expr '(+ 2 (- 3 4)) [["test" 3]])
  (insert-captures-into-expr '(foo 2 {:x (+ 3 4)}) [["a" 3] ["b" 5]])
+ (insert-captures-into-expr '((if x y) 23) [["a" 4]])
+ (print-tree '({} {:x 3}))
+ (print-tree '(defn install-capture!
+  [form & {ns :ns, name :name, :as spec}]
+  (let [spec-with-id (add-capture-record! form spec)
+        records-for-form (capture-records-for ns name)
+        ids-and-idxs (map (fn [{:keys [id ast-idx]}] [id ast-idx]) records-for-form)
+        traced-form (tfm-for-capture form ids-and-idxs)
+        existing (find-existing-def spec-with-id)]
+    [ns name]
+    (remove-watch (find-var (symbol (str ns) (str name))) :cloxp-capture-reinstall)
+    (eval-form traced-form ns existing {::capturing {:hash (hash form)}})
+    (re-install-on-redef spec-with-id)
+    spec-with-id
+    )))
+ (seq {})
  )
