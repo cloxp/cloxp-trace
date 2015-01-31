@@ -6,40 +6,55 @@
   (:require [clojure.string :as s]))
 
 (require '[clojure.tools.trace :as t])
+
+(def ^{:dynamic true} *current-code*)
+
+(defmacro with-source
+  [source & body]
+  `(binding [*current-code* {:source ~source
+                             :lines (s/split-lines ~source)}]
+     ~@body))
+
+(defn get-current
+  [key]
+  (assert *current-code* "*current-code* not defined!")
+  (assert (contains? *current-code* key) (str key " not in *current-code*"))
+  (get *current-code* key))
+
+(defn current-source [] (get-current :source))
+(defn current-lines [] (get-current :lines))
+
 ; -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
 ; pos mapping
 (defn pos->idx
-  [{:keys [line column] :as pos} & {:keys [source lines]}]
-  (if (and (not lines) (not source))
-    (throw (Exception. "pos->idx needs either source or lines!")))
-  pos
-  (let [lines (take line (or lines (s/split-lines source)))
-        line (nth lines (dec line) "")
-        idx (apply + column (-> lines count dec) (map count (drop-last lines)))]
-    idx))
+  ([{:keys [line column] :as pos}]
+   (if (nil? *current-code*)
+     (throw (Exception. "pos->idx needs *current-code* set!")))
+   (let [lines (take line (current-lines))
+         line (nth lines (dec line) "")
+         idx (apply + (dec column) (-> lines count dec) (map count (drop-last lines)))]
+     idx))
+  ([pos source] (with-source source (pos->idx pos))))
 
 (defn idx->pos
-  [idx & {:keys [lines source]}]
-  (if (and (not lines) (not source))
-    (throw (Exception. "idx->pos needs either source or lines!")))
-  (let [source (or source (s/join "\n" lines))
-        subs (.substring source 0 idx)
-        lines (s/split-lines subs)
-        line (last lines)]
-    {:column (count line) :line (count lines)}))
+  ([idx]
+   (if (nil? *current-code*)
+     (throw (Exception. "idx->pos needs either source or lines!")))
+   (let [subs (.substring (current-source) 0 idx)
+         at-nl (.endsWith subs "\n")
+         lines (s/split-lines subs)
+         lines (if at-nl (conj lines "") lines)
+         line (last lines)]
+     {:column (inc (count line)) :line (count lines)}))
+  ([idx source] (with-source source (idx->pos idx))))
 
 ; -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
 ; reading
 
 (defn read-with-source-logger
-  [source]
-  (let [rdr (trt/source-logging-push-back-reader source)]
+  []
+  (let [rdr (trt/source-logging-push-back-reader (current-source))]
     (tr/read rdr)))
-
-(defn src->form-zipper
-  [source]
-  (tfm/tree-zipper
-   (read-with-source-logger source)))
 
 ; -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
 ; data structures for tree traversal / indexing
@@ -58,48 +73,47 @@
   {:idx 2, :parent 0, :form (bbb)}
   {:idx 3, :parent 2, :form bbb}]"
   [form]
-  (let [source (or (some-> form meta :source) "")]
-   (loop [zppr (tfm/tree-zipper form)
-          seen-zpprs [], ctxs []]
-     (if (z/end? zppr)
-       ctxs
-       (let [parent (.indexOf seen-zpprs (z/up zppr))
-             node (z/node zppr)
-             pos (idx-node->source-pos node)
-             lines (s/split-lines source)
-             ctxs (conj ctxs {:idx (count seen-zpprs)
-                              :parent (if (= -1 parent) nil parent)
-                              :form node
-                              :source (:source (meta node))
-                              :pos pos
-                              :pos-idx (if pos (pos->idx pos :lines lines))})
-             seen-zpprs (conj seen-zpprs zppr)]
-         (recur (z/next zppr) seen-zpprs ctxs))))))
+  (with-source (or (some-> form meta :source) "")
+    (loop [zppr (tfm/tree-zipper form)
+           seen-zpprs [], ctxs []]
+      (if (z/end? zppr)
+        ctxs
+        (let [parent (.indexOf seen-zpprs (z/up zppr))
+              node (z/node zppr)
+              pos (idx-node->source-pos node)
+              ctxs (conj ctxs {:idx (count seen-zpprs)
+                               :parent (if (= -1 parent) nil parent)
+                               :form node
+                               :source (:source (meta node))
+                               :pos pos
+                               :pos-idx (if pos (pos->idx pos))})
+              seen-zpprs (conj seen-zpprs zppr)]
+          (recur (z/next zppr) seen-zpprs ctxs))))))
 
 (comment
  (indexed-expr-list (read-with-source-logger "(aaa (bbb))"))
  )
 
-(defn indexed-tree-zipper [s]
-  (let [g (group-by :parent s)] 
+(defn indexed-tree-zipper
+  [idxd-exprs]
+  (let [g (group-by :parent idxd-exprs)]
     (z/zipper
      (comp g :idx)
      #(g (:idx %))
      nil
      (first (g nil)))))
 
-(defn source->indexed-tree-zipper
-  [source]
-  (-> source
-    read-with-source-logger
-    indexed-expr-list 
+(defn indexed-tree-zipper-from-source
+  []
+  (-> (read-with-source-logger)
+    indexed-expr-list
     indexed-tree-zipper))
 
 ; -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
 ; source -> ast mapping
 
 (defn includes-pos?
-  [{pos-column :column, pos-line :line, :as pos} 
+  [{pos-column :column, pos-line :line, :as pos}
    {:keys [line column end-line end-column], :as form}]
   [form pos (and (every? boolean [line column end-line end-column])
              (<= line pos-line) (<= column pos-column)
@@ -108,7 +122,7 @@
        (<= line pos-line) (<= column pos-column)
        (<= pos-line end-line) (<= pos-column end-column)))
 
-(defn- pos->zpprs
+(defn pos->zpprs
   [pos zppr]
   (if-not (z/branch? zppr)
     (list zppr)
@@ -123,29 +137,48 @@
       (cons zppr (or included (list))))))
 
 (defn pos->ast-idx
-  [src pos]
-  (some->> (source->indexed-tree-zipper src)
-    (pos->zpprs pos)
-    last z/node :idx))
+  ([pos]
+   (some->> (indexed-tree-zipper-from-source)
+     (pos->zpprs pos)
+     last z/node :idx))
+  ([pos src] (with-source src (pos->ast-idx pos))))
+
+(defn idx->ast-idx
+  ([idx] (pos->ast-idx (idx->pos idx)))
+  ([idx src] (with-source src (idx->ast-idx idx))))
+
+; -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+; tracing related
+
+(defn pos->node-idx-to-trace
+  ([pos]
+   (some->> (indexed-tree-zipper-from-source)
+     (pos->zpprs pos)
+     last z/node :idx))
+  ([pos src] (with-source src (pos->node-idx-to-trace pos))))
+
+
+; -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
 
 (defn debug-positions
-  [src]
-  (->> (source->indexed-tree-zipper src)
-    (iterate z/next)
-    (take-while (complement z/end?))
-    (map z/node)
-    (map (juxt :idx :form (comp #(select-keys % [:column :line]) idx-node->source-pos :form) :pos-idx))
-    ))
+  ([]
+   (->> (indexed-tree-zipper-from-source)
+     (iterate z/next)
+     (take-while (complement z/end?))
+     (map z/node)
+     (map (juxt :idx :form (comp #(select-keys % [:column :line]) idx-node->source-pos :form) :pos-idx))
+     ))
+  ([src] (with-source src (debug-positions))))
 
 (comment
  (->> (pos->zpprs {:column 7 :line 1} zppr)
    (map (comp :idx z/node)))
 
- (def zppr (source->indexed-tree-zipper "(aaa ({:x (a), :y 23} ccc))"))
+ (def zppr (with-source "(aaa ({:x (a), :y 23} ccc))" (indexed-tree-zipper-from-source)))
 
  (z/branch? zppr)
 
- 
+
  (-> zppr z/down z/next z/down z/node :form meta)
  (-> zppr z/down z/right z/right)
  (-> zppr z/down z/next z/down z/node idx-node->source-pos)
@@ -163,5 +196,5 @@
 ; -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
 
 (comment
-    
+
  )
