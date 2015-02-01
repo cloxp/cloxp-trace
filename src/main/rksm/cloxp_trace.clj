@@ -2,6 +2,7 @@
   (:require [clojure.zip :as z])
   (:require [clojure.data.json :as json])
   (:require [rksm.cloxp-trace.transform :as tfm])
+  (:require [rksm.cloxp-trace.source-mapping :refer (with-source pos->ast-idx read-with-source-logger)])
   (:require [clojure.repl :as repl]))
 
 
@@ -22,9 +23,18 @@
           (vals @capture-records)))
 
 (defn add-capture-record!
-  [form {name :name, idx :ast-idx, ns :ns, :as spec}]
-  (let [id (str ns "/" name "-" idx)
-        id-spec (assoc spec :id id :form form)]
+  [form {:keys [name ns ast-idx pos], :as spec} existing-var]
+  pos
+  (let [idx (or ast-idx (pos->ast-idx pos))
+        indexed-node (nth (rksm.cloxp-trace.source-mapping/indexed-expr-list form) idx {})
+        id (str ns "/" name "-" idx)
+        id-spec (assoc spec :id id, :form form,
+                       :pos (:pos indexed-node),
+                       :ast-idx idx)
+        meta (meta existing-var)
+        id-spec (if meta
+                  (assoc id-spec :loc (select-keys meta [:column :end-column :line :end-line]))
+                  id-spec)]
     (swap! capture-records assoc id id-spec)
     id-spec))
 
@@ -54,12 +64,20 @@
   []
   (send storage empty))
 
+(def ^{:dynamic true} *max-capture-count* 30)
+
+(defn conj-limit
+  [coll val]
+  (conj
+   (if (> (count coll) *max-capture-count*)
+     (drop 1 coll) coll)
+   val))
+
 (defmacro capture
   [loc form]
   `(let [val# ~form]
-    (send storage update-in [~loc] conj val#)
-     val#)
-  )
+     (send storage update-in [~loc] conj-limit val#)
+     val#))
 
 (defn captures->json
   [& {:keys [nss], :or {nss :all}}]
@@ -87,12 +105,13 @@
 
 ; (binding [*ns* "user"] (println *ns*))
 
-(defn eval-form
+(defn eval-form  
   [form ns & [existing add-meta]]
   (let [m (merge (if existing (meta existing) {})
                  (or add-meta {}))
         new-def (binding [*ns* ns] (eval form))]
-    (alter-meta! new-def merge m)))
+    (alter-meta! new-def merge m)
+    (meta new-def)))
 
 (defn find-existing-def
   [spec]
@@ -102,8 +121,10 @@
  (remove-watch #'rksm.cloxp-trace-test/def-for-capture :cloxp-capture-reinstall)
  )
 
+(defonce re-install-log (atom []))
+
 (defn re-install-on-redef
-  [spec]
+  [spec src]
   (if-let [v (find-existing-def spec)]
     (add-watch
      v :cloxp-capture-reinstall
@@ -114,7 +135,6 @@
              name (:name m)
              records (capture-records-for ns name)
              sym (symbol (str ns) (str name))
-             src (try (repl/source-fn sym) (catch Exception e (do e nil)))
              form (if src (read-string src))
              h (if form (hash form))]
          [r k]
@@ -122,32 +142,33 @@
          (if (and src capt-data
                   (not-empty records)
                   (= (:hash capt-data) h))
-           (future (Thread/sleep 100) (do (install-capture! form (first records)) "OK"))
+           (future (Thread/sleep 100)
+                   (do
+                     (install-capture! src :ns ns :name name :ast-idx (:ast-idx (first records)))
+                     "OK"))
            (do 
              (if (not-empty records)
                (uninstall-capture! (-> records first :id)))))
-         )
-       ))))
+         )))))
 
 (defn tfm-for-capture
   [form ids-and-idxs]
   (tfm/insert-captures-into-expr form ids-and-idxs))
 
 (defn install-capture!
-  [form & {ns :ns, name :name, :as spec}]
-  (let [spec-with-id (add-capture-record! form spec)
-        records-for-form (capture-records-for ns name)
-        ids-and-idxs (map (fn [{:keys [id ast-idx]}] [id ast-idx]) records-for-form)
-        traced-form (tfm-for-capture form ids-and-idxs)
-        existing (find-existing-def spec-with-id)
-        bound (find-var (symbol (str ns) (str name)))]
-    ; (println (symbol (str ns) (str name)))
-    (if (and bound (not-empty (-> bound .getWatches)))
-       (remove-watch  bound :cloxp-capture-reinstall))
-    (eval-form traced-form ns existing {::capturing {:hash (hash form)}})
-    (re-install-on-redef spec-with-id)
-    spec-with-id
-    ))
+  [source & {ns :ns, name :name, :as spec}]
+  (with-source source
+    (let [form (read-with-source-logger)
+          existing (find-var (symbol (str (ns-name ns)) (str name)))
+          spec-with-id (add-capture-record! form spec existing)
+          records-for-form (capture-records-for ns name)
+          ids-and-idxs (map (fn [{:keys [id ast-idx]}] [id ast-idx]) records-for-form)
+          traced-form (tfm-for-capture form ids-and-idxs)]
+      (if (and existing (not-empty (-> existing .getWatches)))
+        (remove-watch  existing :cloxp-capture-reinstall))
+      (eval-form traced-form ns existing {::capturing {:hash (hash form)}})
+      (re-install-on-redef spec-with-id source)
+      spec-with-id)))
 
 (defn empty-capture!
   [id]
@@ -156,15 +177,19 @@
 (defn uninstall-capture!
   [id]
   (if-let [spec (get @capture-records id)]
-    (if (:form spec)
-      (do
-        (eval-form (:form spec) (:ns spec) (find-existing-def spec))
-        (swap! capture-records dissoc id))
-      (throw (Exception. (str "cannot uninstall " id ", no form!"))))
-    (throw (Exception. (str "cannot uninstall " id ", no capture record!")))))
+    (do 
+      (let [existing-var (find-existing-def spec)]
+        (if (and existing-var (-> existing-var .getWatches not-empty))
+          (remove-watch existing-var :cloxp-capture-reinstall)))
+      (if (:form spec)
+        (do
+          (eval-form (:form spec) (:ns spec) (find-existing-def spec))
+          (swap! capture-records dissoc id))))))
 
 (defn reset-captures!
   []
+  (try (->> @capture-records keys (map uninstall-capture!) doall)
+    (catch Exception e nil))
   (reset-storage!)
   (reset-capture-records!))
 

@@ -4,7 +4,7 @@
   <groupId>org.rksm</groupId>
   <artifactId>cloxp-trace</artifactId>
   <packaging>clojure</packaging>
-  <version>0.1.0</version>
+  <version>0.1.1-SNAPSHOT</version>
   <name>${artifactId}</name>
   <description>Tracing for cloxp.</description>
   <url>http://maven.apache.org</url>
@@ -73,9 +73,9 @@
       <version>0.2.3</version>
     </dependency>
     <dependency>
-      <groupId>midje</groupId>
-      <artifactId>midje</artifactId>
-      <version>1.6.3</version>
+    	<groupId>org.clojure</groupId>
+    	<artifactId>tools.reader</artifactId>
+    	<version>0.8.13</version>
     </dependency>
   </dependencies>
 
