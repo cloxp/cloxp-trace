@@ -5,8 +5,6 @@
   (:require [clojure.tools.reader.reader-types :as trt])
   (:require [clojure.string :as s]))
 
-(require '[clojure.tools.trace :as t])
-
 (def ^{:dynamic true} *current-code*)
 
 (defmacro with-source
@@ -122,19 +120,19 @@
        (<= line pos-line) (<= column pos-column)
        (<= pos-line end-line) (<= pos-column end-column)))
 
+(defn zipper-includes-pos?
+  [pos z]
+  (includes-pos?
+   pos (-> z z/node :form idx-node->source-pos)))
+
 (defn pos->zpprs
   [pos zppr]
   (if-not (z/branch? zppr)
     (list zppr)
-    (let [down (z/down zppr)
-          downs (take-while (complement nil?) (iterate z/right down))
-          _ (->> downs (map (comp :form z/node)))
-          included (some->> downs
-                     reverse
-                     (filter (fn [z] (includes-pos? pos (-> z z/node :form idx-node->source-pos))))
-                     first
-                     (pos->zpprs pos))]
-      (cons zppr (or included (list))))))
+    (->> zppr
+      (iterate z/next)
+      (take-while (complement z/end?))
+      (filter (partial zipper-includes-pos? pos)))))
 
 (defn pos->ast-idx
   ([pos]

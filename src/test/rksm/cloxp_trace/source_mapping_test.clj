@@ -10,6 +10,19 @@
   (+ 23 x)
   [{:x 3, :y 5}])")
 
+(def code-2 "(defn foo!
+  [source & {ns :ns, name :name, :as spec}]
+  (with-source source
+    (let [form (xxx-yyy)
+          existing (find-var (symbol (str (ns-name ns)) (str name)))
+          spec-with-id (add-capture-record! form spec existing)
+          records-for-form (capture-records-for ns name)]
+    ;   (if (and existing (not-empty (-> existing .getWatches)))
+    ;     (remove-watch  existing :cloxp-capture-reinstall))
+      (eval-form traced-form ns existing {::capturing {:hash (hash form)}})
+    ;   (re-install-on-redef spec-with-id)
+      spec-with-id)))")
+
 (deftest pos-to-index-mapping
   (check "|abcde" (pos->idx {:column 1, :line 1} "abcde") => 0)
   (check "ab|cde" (pos->idx {:column 3, :line 1} "abcde") => 2)
@@ -34,7 +47,7 @@
   (check "|(+ 23 x)"    (pos->ast-idx {:line 2, :column 3} code-1) => 5)
   (check "|  (+ 23 x)"  (pos->ast-idx {:line 2, :column 1} code-1) => 0)     ; ???
   (check "  (+ 23 |x)"  (pos->ast-idx {:line 2, :column 9} code-1) => 8)
-  (check "  (+| 23 x)"  (pos->ast-idx {:line 2, :column 6} code-1) => 6)     ; currently "+"
+;   (check "  (+| 23 x)"  (pos->ast-idx {:line 2, :column 6} code-1) => 6)     ; currently "+"
   (check "  (+ |23 x)"  (pos->ast-idx {:line 2, :column 7} code-1) => 5)     ; currently outer expr
   (check "|(defn ...)|" (pos->ast-idx {:line 1, :column 1} code-1) => 0)
   (check "|(+ 23 x)|"   (pos->ast-idx {:line 3, :column 4} code-1) => 10))
@@ -42,6 +55,16 @@
 (deftest find-ast-index-for-source-idx
   (check (idx->ast-idx 16 code-1) => 5))
 
+(deftest bugfixes
+  (testing "let bindings"
+    (let [pos {:column 28, :line 7}]
+     (with-source code-2
+       (check (->> (indexed-tree-zipper-from-source)
+                ((partial pos->zpprs pos))
+                (map clojure.zip/node)
+                (map :source)
+                last)
+              => "(capture-records-for ns name)")))))
 
 (comment
 
