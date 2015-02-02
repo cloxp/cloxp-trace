@@ -62,13 +62,17 @@
 (defn eval-code
   [{:keys [form line column]}]
   (let [
+        s (new java.io.StringWriter)
         ; meta (or (meta form) {})
         ; pos (select-keys meta [:line :column :end-line :end-column])
-        value (process-result (try (eval form) (catch Exception e e)))]
-    {:pos {:line line :column column}, :value value}))
+        value (process-result (binding [*out* s]
+                                (try (eval form) (catch Exception e e))))
+        out (str s)]
+    {:pos {:line line :column column}, :value value, :out out}))
 
 (defn live-eval-code
-  [code & {:as opts}]
-  (->> (read-objs code)
-    (map eval-code)
-    doall))
+  [code & {:keys [ns], :as opts}]
+  (binding [*ns* (if ns (find-ns ns) *ns*)]
+    (->> (read-objs code)
+      (map eval-code)
+      doall)))
