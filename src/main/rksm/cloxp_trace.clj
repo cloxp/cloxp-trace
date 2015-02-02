@@ -118,7 +118,8 @@
   (find-var (symbol (str (:ns spec)) (str (:name spec)))))
 
 (comment
- (remove-watch #'rksm.cloxp-trace-test/def-for-capture :cloxp-capture-reinstall)
+ (reset! re-install-log [])
+ re-install-log
  )
 
 (defonce re-install-log (atom []))
@@ -129,27 +130,29 @@
     (add-watch
      v :cloxp-capture-reinstall
      (fn [k r o n]
-       (let [m (meta r)
-             capt-data (::capturing m)
-             ns (:ns m)
-             name (:name m)
-             records (capture-records-for ns name)
-             sym (symbol (str ns) (str name))
-             form (if src (read-string src))
-             h (if form (hash form))]
-         [r k]
-         (if (and r k) (try (remove-watch r k) (catch Exception e nil)))
-         (if (and src capt-data
-                  (not-empty records)
-                  (= (:hash capt-data) h))
-           (future (Thread/sleep 100)
-                   (do
-                     (install-capture! src :ns ns :name name :ast-idx (:ast-idx (first records)))
-                     "OK"))
-           (do 
-             (if (not-empty records)
-               (uninstall-capture! (-> records first :id)))))
-         )))))
+       (if (and r k) (try (remove-watch r k) (catch Exception e nil)))
+       (let [capt-data (::capturing (meta r))
+             records (apply capture-records-for
+                            ((juxt (comp :ns meta) (comp :name meta)) r))]
+         (if (not-empty records)
+           (future
+             (Thread/sleep 100)
+             (let [m (meta r) ns (:ns m) name (:name m)
+                   src (or
+                        (:source m)
+                        (clojure.repl/source-fn (symbol (str ns) (str name))))
+                   form (if src (read-string src))
+                   h (if form (hash form))]
+               (if (and src capt-data
+                        (not-empty records)
+                        (= (:hash capt-data) h))
+                 (install-capture! src
+                                   :ns ns
+                                   :name name
+                                   :ast-idx (:ast-idx (first records)))
+                 (if (not-empty records)
+                   (uninstall-capture! (-> records first :id))))
+               ))))))))
 
 (defn tfm-for-capture
   [form ids-and-idxs]
@@ -166,7 +169,7 @@
           traced-form (tfm-for-capture form ids-and-idxs)]
       (if (and existing (not-empty (-> existing .getWatches)))
         (remove-watch  existing :cloxp-capture-reinstall))
-      (eval-form traced-form ns existing {::capturing {:hash (hash form)}})
+      (eval-form traced-form ns existing {::capturing {:hash (hash form)}, :source source})
       (re-install-on-redef spec-with-id source)
       spec-with-id)))
 
@@ -178,13 +181,18 @@
   [id]
   (if-let [spec (get @capture-records id)]
     (do 
+      (swap! capture-records dissoc id)
+      ; 1. uninstall re-def watchers
       (let [existing-var (find-existing-def spec)]
         (if (and existing-var (-> existing-var .getWatches not-empty))
           (remove-watch existing-var :cloxp-capture-reinstall)))
-      (if (:form spec)
-        (do
-          (eval-form (:form spec) (:ns spec) (find-existing-def spec))
-          (swap! capture-records dissoc id))))))
+      ; 2. if the var still includes captures then re-eval it to get rid of them
+      (let [existing (find-existing-def spec)
+            m (meta existing)
+            old-hash (hash (:form spec))
+            new-hash (-> m ::capturing :hash)]
+        (if (and new-hash (= new-hash old-hash))
+          (eval-form (:form spec) (:ns spec) existing))))))
 
 (defn reset-captures!
   []
