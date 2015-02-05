@@ -69,8 +69,8 @@
 (defn conj-limit
   [coll val]
   (conj
-   (if (> (count coll) *max-capture-count*)
-     (drop 1 coll) coll)
+   (if (>= (count coll) *max-capture-count*)
+     (butlast coll) coll)
    val))
 
 (defmacro capture

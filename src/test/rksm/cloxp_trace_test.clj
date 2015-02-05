@@ -148,6 +148,14 @@
              (:rksm.cloxp-trace/capturing (meta #'def-for-capture))))
       )))
 
+(deftest max-capture-count
+  (let [form '(defn def-for-capture [x] (+ x (- 23 x)))]
+    (t/install-capture! (pr-str form) :ns *ns* :name "def-for-capture" :pos {:column 32 :line 1})
+    (dotimes [i (+ 5 t/*max-capture-count*)]
+      (def-for-capture i))
+    (is (= (range -11 19)
+           ((t/await-captures) "rksm.cloxp-trace-test/def-for-capture-8")))))
+
 ; -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
 
 (comment
