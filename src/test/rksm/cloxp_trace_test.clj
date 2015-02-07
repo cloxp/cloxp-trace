@@ -2,8 +2,23 @@
   (:require [clojure.test :refer :all]
             [rksm.cloxp-trace :as t]))
 
+; -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+; test data
+
 (defn def-for-capture [x]
   (+ x (- 23 x)))
+
+(defmulti foo-method class)
+
+(defmethod foo-method Number
+  [x]
+  (+ 3 x))
+
+(defmethod foo-method String
+  [x]
+  (.toUpperCase x))
+
+; -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
 
 (defn capture-reset-fixture [test]
 
@@ -34,14 +49,13 @@
     (is (= '(foo 2 (rksm.cloxp-trace/capture "a" [{:x (rksm.cloxp-trace/capture "b" (+ 3 4))}]))
            (t/tfm-for-capture '(foo 2 [{:x (+ 3 4)}]) [["a" 3] ["b" 6]])))))
 
-(defonce last-meta (atom []))
-
 (deftest capture-install-into-def
 
   (let [form '(defn def-for-capture [x] (+ x (- 23 x)))]
     (eval form)
     (let [spec (t/install-capture! (pr-str form) :ns *ns* :name "def-for-capture" :ast-idx 8)]
-      (is (= {:column 32 :line 1 :end-column 40 :end-line 1} (:pos spec))))
+      (is (= {:column 32 :line 1 :end-column 40 :end-line 1} (:pos spec)))
+      (is (=  "defn" (:type spec))))
     (is (= 23 (def-for-capture 3)))
     (is (= {"rksm.cloxp-trace-test/def-for-capture-8" [20]} (t/await-captures)))
     (is (= {:hash (hash form)}
@@ -156,9 +170,37 @@
     (is (= (range -11 19)
            ((t/await-captures) "rksm.cloxp-trace-test/def-for-capture-8")))))
 
+(deftest multi-method
+
+  (let [form '(defmethod foo-method String [x] (.toUpperCase x))
+        spec (t/install-capture! (pr-str form) :ns *ns* :name "foo-method" :ast-idx 6)]
+    (is (= "defmethod" (:type spec)))
+    (is (= 4 (foo-method 1)))
+    (is (= "HELLO" (foo-method "hello")))
+    (is (= {"rksm.cloxp-trace-test/foo-method-6-String" ["HELLO"]} (t/await-captures)))
+    (is (contains? @t/capture-records "rksm.cloxp-trace-test/foo-method-6-String"))
+    ))
+
+(deftest two-multi-methods
+
+  (let [form-1 '(defmethod foo-method String [x] (.toUpperCase x))
+        form-2 '(defmethod foo-method Number [x] (+ 3 x))]
+    (t/install-capture! (pr-str form-1) :ns *ns* :name "foo-method" :ast-idx 6)
+    (t/install-capture! (pr-str form-2) :ns *ns* :name "foo-method" :ast-idx 6)
+    (is (= 4 (foo-method 1)))
+    (is (= "HELLO" (foo-method "hello")))
+    (is (= {"rksm.cloxp-trace-test/foo-method-6-String" ["HELLO"]
+            "rksm.cloxp-trace-test/foo-method-6-Number" [4]}
+           (t/await-captures)))
+    )
+  )
+
 ; -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
 
 (comment
+ 
+ (macroexpand-1 '(defmethod ^{:dynamic true}foo-method [String ::foo] "Bar" ([x] (.toUpperCase x))))
+ 
  (t/reset-captures!)
  (ns-unmap *ns* 'def-for-capture)
  (keys (ns-interns *ns*))

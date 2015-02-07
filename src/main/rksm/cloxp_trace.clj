@@ -6,6 +6,43 @@
   (:require [clojure.repl :as repl]))
 
 
+(defn type-of-def
+  [form]
+  (str (first form)))
+
+(defn name-of-def
+  [form]
+  (first (drop 1 (filter symbol? form))))
+
+(defn extract-defmethod-matches
+  "takes a defmethod form and extract the match args from it, like
+  '(defmethod ^{:dynamic true}foo-method String [::foo \"Bar\"] ([x] (.toUpperCase x)))
+  =>
+  '(String [:user/foo \"Bar\"])"
+  [form]
+  (let [ex-form (macroexpand form)
+        [_ _ _ match-1 fn-def] ex-form
+        rest-matches (if (= (->> fn-def last (map type))
+                            [clojure.lang.PersistentVector clojure.lang.PersistentList])
+                       (->> fn-def (drop 1) (drop-last))
+                       (->> fn-def (drop 1) (drop-last 2)))]
+    (cons match-1 rest-matches)))
+
+(defmulti make-id (fn [type & _] type))
+
+(defmethod make-id "defmethod"
+  [type form ns name idx]
+  (str
+   (make-id "def" form ns name idx)
+   "-" 
+   (clojure.string/join "-" (extract-defmethod-matches form))))
+
+(defmethod make-id :default
+  [type form ns name idx]
+  (str ns "/" name "-" idx))
+
+; -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+
 (declare install-capture! uninstall-capture!)
 
 (def capture-records (atom {}))
@@ -24,13 +61,16 @@
 
 (defn add-capture-record!
   [form {:keys [name ns ast-idx pos], :as spec} existing-var]
-  pos
-  (let [idx (or ast-idx (pos->ast-idx pos))
+  (let [type (type-of-def form)
+        idx (or ast-idx (pos->ast-idx pos))
         indexed-node (nth (rksm.cloxp-trace.source-mapping/indexed-expr-list form) idx {})
-        id (str ns "/" name "-" idx)
-        id-spec (assoc spec :id id, :form form,
-                       :pos (:pos indexed-node),
-                       :ast-idx idx)
+        id (make-id type form ns name idx)
+        id-spec (merge spec {:id id,
+                             :form form,
+                             :pos (:pos indexed-node),
+                             :ast-idx idx,
+                             :type type,
+                             :defmethod-matches (map pr-str (extract-defmethod-matches form))})
         meta (meta existing-var)
         id-spec (if meta
                   (assoc id-spec :loc (select-keys meta [:column :end-column :line :end-line]))
@@ -107,11 +147,13 @@
 
 (defn eval-form  
   [form ns & [existing add-meta]]
-  (let [m (merge (if existing (meta existing) {})
-                 (or add-meta {}))
-        new-def (binding [*ns* ns] (eval form))]
-    (alter-meta! new-def merge m)
-    (meta new-def)))
+  (let [name (name-of-def form)
+        sym (symbol (str ns) (str name))
+        m (merge (if existing (meta existing) {})
+                 (or add-meta {}))]
+    (binding [*ns* ns] (eval form))
+    (let [new-def (find-var sym)]
+      (alter-meta! new-def merge m))))
 
 (defn find-existing-def
   [spec]
