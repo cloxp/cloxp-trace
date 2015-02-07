@@ -4,6 +4,12 @@
   (:require [clojure.tools.reader.reader-types :as trt])
   (:require [clojure.string :as s]))
 
+(defn truncate
+  [s len]
+  (if (> (count s) len)
+    (str (.substring s 0 len) "...")
+    s))
+
 ; -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
 ; FIXME duplicated form rksm.system-navigator.ns.internals, refactor!
 
@@ -46,7 +52,12 @@
 
 (defmethod process-result clojure.lang.Var
   [var]
-  (str var "=> " (deref var)))
+  (let [m (meta var)
+        name (if (= *ns* (:ns m))
+               (:name m)
+               (s/join "/" ((juxt (comp str :ns) (constantly "/") (comp str :name)) m)))
+        val (deref var)]
+    (str name " => " (truncate (str val) 20))))
 
 (defmethod process-result java.lang.Exception
   [e]
