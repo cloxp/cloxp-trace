@@ -61,10 +61,7 @@
 
 (defmethod process-result java.lang.Exception
   [e]
-  (pr-str e)
-;   (clojure.repl/pst e 40)
-;   "error"
-  )
+  (pr-str e))
 
 (defmethod process-result :default
   [x]

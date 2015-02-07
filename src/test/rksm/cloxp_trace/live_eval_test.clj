@@ -1,6 +1,6 @@
 (ns rksm.cloxp-trace.live-eval-test
-  (:require [clojure.test :refer :all])
-  (:require [rksm.cloxp-trace.live-eval :refer :all]))
+  (:require [clojure.test :refer :all]
+            [rksm.cloxp-trace.live-eval :refer :all]))
 
 (deftest eval-code-and-gather-results
   
@@ -8,7 +8,7 @@
    (let [code "(def x 23)\n\n(+ x 2)\n3"
          eval-result (live-eval-code code :ns 'user)]
      (is (= [{:pos {:line 1, :column 1}, :out "",
-              :value "#'user/x=> 23"}
+              :value "x => 23"}
              {:pos {:line 3, :column 1}, :out "", :value "25"}
              {:pos {:line 4, :column 1}, :out "", :value "3"}]
             eval-result))))
