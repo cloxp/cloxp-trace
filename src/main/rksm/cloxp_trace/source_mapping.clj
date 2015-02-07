@@ -7,9 +7,13 @@
 
 (def ^{:dynamic true} *current-code*)
 
+(defn unescape-slashes
+  [src]
+  (s/replace src (str "__" "SLASH" "__") "\\"))
+
 (defmacro with-source
   [source & body]
-  `(binding [*current-code* {:source ~source
+  `(binding [*current-code* {:source (unescape-slashes ~source)
                              :lines (s/split-lines ~source)}]
      ~@body))
 
