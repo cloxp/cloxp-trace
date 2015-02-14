@@ -5,6 +5,7 @@
   (:require [rksm.cloxp-trace.source-mapping :refer (with-source pos->ast-idx read-with-source-logger)])
   (:require [clojure.repl :as repl]))
 
+(def ^{:dynamic true} *repl-source*)
 
 (defn type-of-def
   [form]

@@ -1,8 +1,7 @@
 (ns rksm.cloxp-trace.live-eval
-;   (:require [clo])
-  (:require [clojure.tools.reader :as tr])
-  (:require [clojure.tools.reader.reader-types :as trt])
-  (:require [clojure.string :as s]))
+  (:require [clojure.tools.reader :as tr]
+            [clojure.tools.reader.reader-types :as trt]
+            [clojure.string :as s]))
 
 (defn truncate
   [s len]
@@ -79,8 +78,8 @@
     {:pos {:line line :column column}, :value value, :out out}))
 
 (defn live-eval-code
-  [code & {:keys [ns], :as opts}]
-  (binding [*ns* (if ns (find-ns ns) *ns*)]
+  [code & {:keys [file ns], :as opts}]
+  (binding [*ns* (if ns (find-ns ns) *ns*) *file* file]
     (->> (read-objs code)
       (map eval-code)
       doall)))
