@@ -44,7 +44,7 @@
 
 ; -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
 
-(declare install-capture! uninstall-capture!)
+(declare install-capture! uninstall-capture! uninstall-captures-in-def!)
 
 (def capture-records (atom {}))
 
@@ -194,7 +194,7 @@
                                    :name name
                                    :ast-idx (:ast-idx (first records)))
                  (if (not-empty records)
-                   (uninstall-capture! (-> records first :id))))
+                   (uninstall-captures-in-def! (-> records first :id))))
                ))))))))
 
 (defn tfm-for-capture
@@ -223,19 +223,31 @@
 (defn uninstall-capture!
   [id]
   (if-let [spec (get @capture-records id)]
-    (do 
+    (let [{id :id} spec]
+      ; 1.forget record and captures
       (swap! capture-records dissoc id)
-      ; 1. uninstall re-def watchers
+      (empty-capture! id)
+      ; 2. uninstall re-def watchers
       (let [existing-var (find-existing-def spec)]
         (if (and existing-var (-> existing-var .getWatches not-empty))
           (remove-watch existing-var :cloxp-capture-reinstall)))
-      ; 2. if the var still includes captures then re-eval it to get rid of them
+      ; 3. if the var still includes captures then re-eval it to get rid of them
       (let [existing (find-existing-def spec)
             m (meta existing)
             old-hash (hash (:form spec))
             new-hash (-> m ::capturing :hash)]
         (if (and new-hash (= new-hash old-hash))
           (eval-form (:form spec) (:ns spec) existing))))))
+
+(defn uninstall-captures-in-def!
+  [id]
+  (if-let [spec (get @capture-records id)]
+    (let [ns-and-name (select-keys spec [:name :ns])
+          recs-in-same-def (filter
+                            #(= ns-and-name (select-keys (val %) [:name :ns]))
+                            @capture-records)]
+      (doseq [[id _] recs-in-same-def]
+        (uninstall-capture! id)))))
 
 (defn reset-captures!
   []
