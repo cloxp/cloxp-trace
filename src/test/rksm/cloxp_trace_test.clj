@@ -140,13 +140,17 @@
     ))
 
 (deftest multiple-captures-into-same-def
-
+  
   (let [form '(defn def-for-capture [x] (+ x (- 23 x)))]
     (t/install-capture! (pr-str form) :ns *ns* :name "def-for-capture" :ast-idx 5)
     (t/install-capture! (pr-str form) :ns *ns* :name "def-for-capture" :ast-idx 8)
-    (is (= 23 (eval '(def-for-capture 3))))
-    (is (= {"rksm.cloxp-trace-test/def-for-capture-5" [23],
-            "rksm.cloxp-trace-test/def-for-capture-8" [20]} (t/await-captures)))))
+    (testing "install"
+      (is (= 23 (eval '(def-for-capture 3))))
+      (is (= {"rksm.cloxp-trace-test/def-for-capture-5" [23],
+               "rksm.cloxp-trace-test/def-for-capture-8" [20]} (t/await-captures))))
+    (testing "uninstall"
+      (t/uninstall-captures-in-def! "rksm.cloxp-trace-test/def-for-capture-5")
+      (is (= {} @t/capture-records)))))
 
 
 ; -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
@@ -198,8 +202,7 @@
 ; -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
 
 (comment
- 
- (macroexpand-1 '(defmethod ^{:dynamic true}foo-method [String ::foo] "Bar" ([x] (.toUpperCase x))))
+
  
  (t/reset-captures!)
  (ns-unmap *ns* 'def-for-capture)
@@ -218,7 +221,7 @@
 
  (t/await-captures)
 
- (run-tests 'rksm.cloxp-trace-test)
+ (run-tests *ns*)
  (eval form)
 
  )

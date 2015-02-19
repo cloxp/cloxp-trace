@@ -67,25 +67,25 @@
               => "(capture-records-for ns name)")))))
 
 (comment
-
- (run-tests 'rksm.cloxp-trace.source-mapping-test)
-
+ 
+ (run-tests *ns*)
+ 
  (require '[clojure.zip :as z])
-
+ 
  (some->> (source->indexed-tree-zipper code-1)
    (pos->zpprs {:column 3, :line 2})
    (map z/node))
-
+ 
  (pos->idx {:column 0, :line 2} :source code-1)
-
+ 
  (some->> (source->indexed-tree-zipper code-1)
    (pos->zpprs {:column 0, :line 2})
    (map z/node))
-
+ 
  (debug-positions code-1)
  code-1
  (-> (debug-positions "(#'foo %)")
    (nth 2)
    str)
-
-  )
+ 
+ )

@@ -9,9 +9,11 @@
 
 (defmacro with-source
   [source & body]
-  `(binding [*current-code* {:source ~source
-                             :lines (s/split-lines ~source)}]
-     ~@body))
+  `(do
+     (assert (string? ~source))
+     (binding [*current-code* {:source ~source
+                               :lines (s/split-lines ~source)}]
+       ~@body)))
 
 (defn get-current
   [key]
