@@ -218,7 +218,7 @@
 
 (defn empty-capture!
   [id]
-  (send storage update-in [id] empty))
+  (send storage dissoc id))
 
 (defn uninstall-capture!
   [id]
