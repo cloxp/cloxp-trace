@@ -93,6 +93,8 @@
 (def storage (agent {}))
 
 (defn captures
+  "maps ids (def name + source loc) to vecs of capture entries. A capture entry
+  is a map with the keys :value, :trace."
   []
   @storage)
 
@@ -114,21 +116,34 @@
      (butlast coll) coll)
    val))
 
+(defn get-trace
+  []
+  (->> (.getStackTrace (Thread/currentThread))
+    (drop 2)
+    ; (map clojure.repl/stack-element-str)
+    ; (clojure.string/join "\n")
+    ))
+
+(defn stringify-trace
+  [trace]
+  (->> trace
+    (map clojure.repl/stack-element-str)
+    (s/join "\n")))
+
 (defmacro capture
   [loc form]
   `(let [val# ~form]
-     (send storage update-in [~loc] conj-limit val#)
+     (send storage update-in [~loc] conj-limit {:value val#, :last-trace (get-trace)})
      val#))
 
 (defn captures->json
   [& {:keys [nss], :or {nss :all}}]
   (let [records (if (= nss :all) (vals @capture-records)
                   (filter #(some #{(-> % :ns str)} nss) (vals @capture-records)))
-        massage-data (fn [r]
-                       (-> r
-                         (assoc :last-val (pr-str (first (get @storage (:id r) []))))
-                         (dissoc :form)
-                         (update-in [:ns] str)))]
+        massage-data (fn [{id :id :as r}]
+                       (let [{:keys [value trace]} (first (get @storage id []))]
+                         (-> r
+                           (assoc :last-val (pr-str value) :trace (stringify-trace trace))
     (->> records
       (map massage-data)
       json/write-str)))

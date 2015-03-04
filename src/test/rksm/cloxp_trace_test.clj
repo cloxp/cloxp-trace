@@ -21,22 +21,24 @@
 ; -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
 
 (defn capture-reset-fixture [test]
-
   (let [ns (find-ns 'rksm.cloxp-trace-test)]
     (binding [*ns* ns]
       (test)))
   (t/reset-captures!)
-  (t/await-captures)
-  )
+  (t/await-captures))
 
 (use-fixtures :each capture-reset-fixture)
 
 ; -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
 
 (deftest capture-function
-  (do
+  (testing "value and trace are captured"
     (is (= 3 (t/capture "no-loc" (+ 1 2))))
-    (is (= {"no-loc" [3]} (t/await-captures)))))
+    (let [[{v :value, t :trace}] (get (t/await-captures) "no-loc")]
+      (is (= 3 v))
+      (is (every? #(= (type %) java.lang.StackTraceElement) t))
+      ; (is (= 23 (count t)))
+      )))
 
 
 (deftest capture-transform
@@ -51,18 +53,18 @@
 
 (deftest capture-install-into-def
 
-  (let [form '(defn def-for-capture [x] (+ x (- 23 x)))]
-    (eval form)
-    (let [spec (t/install-capture! (pr-str form) :ns *ns* :name "def-for-capture" :ast-idx 8)]
+  (let [src "(defn def-for-capture [x] (+ x (- 23 x)))"]
+    (eval (read-string src))
+    (let [spec (t/install-capture! src :ns *ns* :name "def-for-capture" :ast-idx 8)]
       (is (= {:column 32 :line 1 :end-column 40 :end-line 1} (:pos spec)))
       (is (=  "defn" (:type spec))))
     (is (= 23 (def-for-capture 3)))
-    (is (= {"rksm.cloxp-trace-test/def-for-capture-8" [20]} (t/await-captures)))
-    (is (= {:hash (hash form)}
+    
+    (let [{[{v :value}] "rksm.cloxp-trace-test/def-for-capture-8"} (t/await-captures)]
+      (is (= 20 v)))
+    (is (= {:hash (hash src)}
            (:rksm.cloxp-trace/capturing (meta #'def-for-capture))))
-    (is (= (pr-str form)
-           (:source (meta #'def-for-capture)))))
-  )
+    (is (= src (:source (meta #'def-for-capture))))))
 
 (deftest capture-uninstall-from-def
 
@@ -71,8 +73,7 @@
     (t/uninstall-capture! (:id spec))
     (is (= 23 (eval '(def-for-capture 3))))
     (is (= {} (t/await-captures)))
-    (is (= {} @t/capture-records))
-    ))
+    (is (= {} @t/capture-records))))
 
 (comment
  (-> #'rksm.cloxp-trace-test/def-for-capture .getWatches)
@@ -84,49 +85,46 @@
 
 (deftest redefining-def-keeps-captures
 
-  (let [form '(defn def-for-capture [x] (+ x (- 23 x)))]
+  (let [src "(defn def-for-capture [x] (+ x (- 23 x)))"]
 
     (testing "setup"
-
-      (eval form)
-      (t/install-capture! (pr-str form) :ns *ns* :name "def-for-capture" :ast-idx 5)
+      (eval (read-string src))
+      (t/install-capture! src :ns *ns* :name "def-for-capture" :ast-idx 5)
       (is (= (-> @t/capture-records keys) '("rksm.cloxp-trace-test/def-for-capture-5")))
       (is (= 23 (def-for-capture 3)))
-      (is (= {"rksm.cloxp-trace-test/def-for-capture-5" [23]} (t/await-captures)))
+      (is (= [23] (map :value (get (t/await-captures) "rksm.cloxp-trace-test/def-for-capture-5"))))
       )
 
     (testing "re-install"
-      (eval form)
-      (alter-meta! #'def-for-capture assoc :source (pr-str form))
+      (eval (read-string src))
+      (alter-meta! #'def-for-capture assoc :source src)
       (Thread/sleep 400)
       (is (= 23 (def-for-capture 3)))
-      (is (= {"rksm.cloxp-trace-test/def-for-capture-5" [23 23]} (t/await-captures))))
+      (is (= [23 23] (->> "rksm.cloxp-trace-test/def-for-capture-5"
+                      (get (t/await-captures))
+                      (map :value)))))
 
     (testing "uninstall really removes capture"
       (t/uninstall-capture! "rksm.cloxp-trace-test/def-for-capture-5")
-      (t/reset-storage!)
       (is (= 23 (def-for-capture 3)))
       (is (= {} (t/await-captures)))
-      (eval form)
-      (Thread/sleep 400)
+      (eval (read-string src))
       (is (= 23 (def-for-capture 3)))
-      (is (= {} (t/await-captures)))
-      )
+      (is (= {} (t/await-captures))))
     ))
 
 (deftest source-changes-disable-reinstall
-
-  (let [form '(defn def-for-capture [x] (+ x (- 23 x)))]
-
-    (testing "setup"
-
-      (eval form)
-      (t/install-capture! (pr-str form) :ns *ns* :name "def-for-capture" :ast-idx 5)
+  
+  (let [src "(defn def-for-capture [x] (+ x (- 23 x)))"]
+    
+    (testing "setup"      
+      (eval src)
+      (t/install-capture! src :ns *ns* :name "def-for-capture" :ast-idx 5)
       (is (= (-> @t/capture-records keys) '("rksm.cloxp-trace-test/def-for-capture-5")))
       (is (= 23 (def-for-capture 3)))
-    ;   (is (= {"rksm.cloxp-trace-test/def-for-capture-5" [23]} (t/await-captures)))
+      ;   (is (= {"rksm.cloxp-trace-test/def-for-capture-5" [23]} (t/await-captures)))
       )
-
+    
     (testing "re-install"
       (t/reset-storage!)
       (let [new-src "(defn def-for-capture [x] (* x x x))"]
@@ -135,9 +133,7 @@
         (Thread/sleep 400)
         (is (= 27 ((deref #'def-for-capture) 3)))
         ; (is (= (-> @t/capture-records keys) '("rksm.cloxp-trace-test/def-for-capture-5")))
-        (is (= {} (t/await-captures)))))
-
-    ))
+        (is (= {} (t/await-captures)))))))
 
 (deftest multiple-captures-into-same-def
   
@@ -146,8 +142,11 @@
     (t/install-capture! (pr-str form) :ns *ns* :name "def-for-capture" :ast-idx 8)
     (testing "install"
       (is (= 23 (eval '(def-for-capture 3))))
-      (is (= {"rksm.cloxp-trace-test/def-for-capture-5" [23],
-               "rksm.cloxp-trace-test/def-for-capture-8" [20]} (t/await-captures))))
+      (let [{c1 "rksm.cloxp-trace-test/def-for-capture-5",
+             c2 "rksm.cloxp-trace-test/def-for-capture-8"}
+            (t/await-captures)]
+        (is (= [23] (map :value c1)))
+        (is (= [20] (map :value c2)))))
     (testing "uninstall"
       (t/uninstall-captures-in-def! "rksm.cloxp-trace-test/def-for-capture-5")
       (is (= {} @t/capture-records)))))
@@ -157,47 +156,48 @@
 
 (deftest install-via-position
   (testing "into def"
-    (let [form '(defn def-for-capture [x] (+ x (- 23 x)))]
-      (t/install-capture! (pr-str form) :ns *ns* :name "def-for-capture" :pos {:column 32 :line 1})
+    (let [src "(defn def-for-capture [x] (+ x (- 23 x)))"]
+      (t/install-capture! src :ns *ns* :name "def-for-capture" :pos {:column 32 :line 1})
       (is (= 23 (def-for-capture 3)))
       (Thread/sleep 400)
-      (is (= {"rksm.cloxp-trace-test/def-for-capture-8" [20]} (t/await-captures)))
-      (is (= {:hash (hash form)}
-             (:rksm.cloxp-trace/capturing (meta #'def-for-capture))))
-      )))
+      (is (= [20] (map :value (get (t/await-captures) "rksm.cloxp-trace-test/def-for-capture-8"))))
+      (is (= {:hash (hash src)}
+             (:rksm.cloxp-trace/capturing (meta #'def-for-capture)))))))
 
 (deftest max-capture-count
-  (let [form '(defn def-for-capture [x] (+ x (- 23 x)))]
-    (t/install-capture! (pr-str form) :ns *ns* :name "def-for-capture" :pos {:column 32 :line 1})
+  (let [src "(defn def-for-capture [x] (+ x (- 23 x)))"]
+    (t/install-capture! src :ns *ns* :name "def-for-capture" :pos {:column 32 :line 1})
     (dotimes [i (+ 5 t/*max-capture-count*)]
       (def-for-capture i))
-    (is (= (range -11 19)
-           ((t/await-captures) "rksm.cloxp-trace-test/def-for-capture-8")))))
+    (let [{captured "rksm.cloxp-trace-test/def-for-capture-8"} (t/await-captures)
+          vals (map :value captured)]
+      (is (= (range -11 19) vals)))))
 
 (deftest multi-method
 
-  (let [form '(defmethod foo-method String [x] (.toUpperCase x))
-        spec (t/install-capture! (pr-str form) :ns *ns* :name "foo-method" :ast-idx 6)]
+  (let [src "(defmethod foo-method String [x] (.toUpperCase x))"
+        spec (t/install-capture! src :ns *ns* :name "foo-method" :ast-idx 6)]
     (is (= "defmethod" (:type spec)))
     (is (= 4 (foo-method 1)))
     (is (= "HELLO" (foo-method "hello")))
-    (is (= {"rksm.cloxp-trace-test/foo-method-6-String" ["HELLO"]} (t/await-captures)))
+    (let [{[{v :value}] "rksm.cloxp-trace-test/foo-method-6-String"} (t/await-captures)]
+      (is (= "HELLO" v)))
     (is (contains? @t/capture-records "rksm.cloxp-trace-test/foo-method-6-String"))
     ))
 
 (deftest two-multi-methods
-
-  (let [form-1 '(defmethod foo-method String [x] (.toUpperCase x))
-        form-2 '(defmethod foo-method Number [x] (+ 3 x))]
-    (t/install-capture! (pr-str form-1) :ns *ns* :name "foo-method" :ast-idx 6)
-    (t/install-capture! (pr-str form-2) :ns *ns* :name "foo-method" :ast-idx 6)
+  
+  (let [src-1 "(defmethod foo-method String [x] (.toUpperCase x))"
+        src-2 "(defmethod foo-method Number [x] (+ 3 x))"]
+    (t/install-capture! src-1 :ns *ns* :name "foo-method" :ast-idx 6)
+    (t/install-capture! src-2 :ns *ns* :name "foo-method" :ast-idx 6)
     (is (= 4 (foo-method 1)))
     (is (= "HELLO" (foo-method "hello")))
-    (is (= {"rksm.cloxp-trace-test/foo-method-6-String" ["HELLO"]
-            "rksm.cloxp-trace-test/foo-method-6-Number" [4]}
-           (t/await-captures)))
-    )
-  )
+    (let [{c1 "rksm.cloxp-trace-test/foo-method-6-String",
+           c2 "rksm.cloxp-trace-test/foo-method-6-Number"}
+          (t/await-captures)]
+      ; (is (= ["HELLO"] (map :value c1)))
+      (is (= [4] (map :value c2))))))
 
 ; -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
 
