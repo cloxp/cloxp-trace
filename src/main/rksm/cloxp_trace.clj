@@ -3,7 +3,8 @@
   (:require [clojure.data.json :as json])
   (:require [rksm.cloxp-trace.transform :as tfm])
   (:require [rksm.cloxp-trace.source-mapping :refer (with-source pos->ast-idx read-with-source-logger)])
-  (:require [clojure.repl :as repl]))
+  (:require [clojure.repl :as repl])
+  (:require [clojure.string :as s]))
 
 (def ^{:dynamic true} *repl-source*)
 
@@ -61,13 +62,13 @@
           (vals @capture-records)))
 
 (defn add-capture-record!
-  [form {:keys [name ns ast-idx pos], :as spec} existing-var]
+  [form source {:keys [name ns ast-idx pos], :as spec} existing-var]
   (let [type (type-of-def form)
         idx (or ast-idx (pos->ast-idx pos))
         indexed-node (nth (rksm.cloxp-trace.source-mapping/indexed-expr-list form) idx {})
         id (make-id type form ns name idx)
         id-spec (merge spec {:id id,
-                             :form form,
+                             :source source,
                              :pos (:pos indexed-node),
                              :ast-idx idx,
                              :type type,
@@ -144,22 +145,20 @@
                        (let [{:keys [value trace]} (first (get @storage id []))]
                          (-> r
                            (assoc :last-val (pr-str value) :trace (stringify-trace trace))
+                           (dissoc :source)
+                           (update-in [:ns] str))))]
     (->> records
       (map massage-data)
       json/write-str)))
 
 (comment
-
  (captures->json :nss ["user"])
-
  (captures->json :nss :all)
   @capture-records
-  @storage
-  
+  @storage  
  )
-; -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
 
-; (binding [*ns* "user"] (println *ns*))
+; -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
 
 (defn eval-form  
   [form ns & [existing add-meta]]
@@ -199,8 +198,7 @@
                    src (or
                         (:source m)
                         (clojure.repl/source-fn (symbol (str ns) (str name))))
-                   form (if src (read-string src))
-                   h (if form (hash form))]
+                   h (if src (hash src))]
                (if (and src capt-data
                         (not-empty records)
                         (= (:hash capt-data) h))
@@ -221,13 +219,13 @@
   (with-source source
     (let [form (read-with-source-logger)
           existing (find-var (symbol (str (ns-name ns)) (str name)))
-          spec-with-id (add-capture-record! form spec existing)
+          spec-with-id (add-capture-record! form source spec existing)
           records-for-form (capture-records-for ns name)
           ids-and-idxs (map (fn [{:keys [id ast-idx]}] [id ast-idx]) records-for-form)
           traced-form (tfm-for-capture form ids-and-idxs)]
       (if (and existing (not-empty (-> existing .getWatches)))
         (remove-watch  existing :cloxp-capture-reinstall))
-      (eval-form traced-form ns existing {::capturing {:hash (hash form)}, :source source})
+      (eval-form traced-form ns existing {::capturing {:hash (hash source)}, :source source})
       (re-install-on-redef spec-with-id source)
       spec-with-id)))
 
@@ -237,11 +235,11 @@
 
 (defn uninstall-capture!
   [id]
+  (empty-capture! id)
   (if-let [spec (get @capture-records id)]
     (let [{id :id} spec]
       ; 1.forget record and captures
       (swap! capture-records dissoc id)
-      (empty-capture! id)
       ; 2. uninstall re-def watchers
       (let [existing-var (find-existing-def spec)]
         (if (and existing-var (-> existing-var .getWatches not-empty))
@@ -249,10 +247,10 @@
       ; 3. if the var still includes captures then re-eval it to get rid of them
       (let [existing (find-existing-def spec)
             m (meta existing)
-            old-hash (hash (:form spec))
+            old-hash (hash (:source spec))
             new-hash (-> m ::capturing :hash)]
         (if (and new-hash (= new-hash old-hash))
-          (eval-form (:form spec) (:ns spec) existing))))))
+          (eval-form (read-string (:source spec)) (:ns spec) existing))))))
 
 (defn uninstall-captures-in-def!
   [id]
