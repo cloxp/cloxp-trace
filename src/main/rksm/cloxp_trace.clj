@@ -1,10 +1,11 @@
 (ns rksm.cloxp-trace
-  (:require [clojure.zip :as z])
-  (:require [clojure.data.json :as json])
-  (:require [rksm.cloxp-trace.transform :as tfm])
-  (:require [rksm.cloxp-trace.source-mapping :refer (with-source pos->ast-idx read-with-source-logger)])
-  (:require [clojure.repl :as repl])
-  (:require [clojure.string :as s]))
+  (:require [clojure.zip :as z]
+            [clojure.data.json :as json]
+            [rksm.cloxp-trace.transform :as tfm]
+            [rksm.cloxp-trace.source-mapping :refer (with-source pos->ast-idx read-with-source-logger)]
+            [clojure.repl :as repl]
+            [clojure.string :as s]
+            [clj-stacktrace.core :as st]))
 
 (def ^{:dynamic true} *repl-source*)
 
@@ -47,7 +48,7 @@
 
 (declare install-capture! uninstall-capture! uninstall-captures-in-def!)
 
-(def capture-records (atom {}))
+(defonce capture-records (atom {}))
 
 (defn reset-capture-records!
   []
@@ -91,7 +92,7 @@
  @storage
  )
 
-(def storage (agent {}))
+(defonce storage (agent {}))
 
 (defn captures
   "maps ids (def name + source loc) to vecs of capture entries. A capture entry
@@ -107,6 +108,11 @@
 (defn reset-storage!
   []
   (send storage empty))
+
+(comment
+ (-> @storage (get "user/hello-11") first :trace)
+
+ )
 
 (def ^{:dynamic true} *max-capture-count* 30)
 
@@ -134,17 +140,27 @@
 (defmacro capture
   [loc form]
   `(let [val# ~form]
-     (send storage update-in [~loc] conj-limit {:value val#, :last-trace (get-trace)})
+     (send storage update-in [~loc] conj-limit
+           {:value val#
+            :trace (st/parse-trace-elems (get-trace))
+            :time (System/currentTimeMillis)})
      val#))
 
+(defn inspect
+  [id & [n]]
+  (let [values (get @storage id)]
+    (if n (-> values (nth n) :value) (map :value values))))
+
 (defn captures->json
-  [& {:keys [nss], :or {nss :all}}]
+  [& {:keys [nss only-last], :or {nss :all, only-last false}}]
   (let [records (if (= nss :all) (vals @capture-records)
                   (filter #(some #{(-> % :ns str)} nss) (vals @capture-records)))
         massage-data (fn [{id :id :as r}]
-                       (let [{:keys [value trace]} (first (get @storage id []))]
+                       (let [stored (get @storage id [])]
                          (-> r
-                           (assoc :last-val (pr-str value) :trace (stringify-trace trace))
+                           (assoc :values (map (comp pr-str :value) stored)
+                                  :traces (map :trace stored)
+                                  :times (map :time stored))
                            (dissoc :source)
                            (update-in [:ns] str))))]
     (->> records

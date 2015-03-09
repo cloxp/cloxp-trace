@@ -73,9 +73,14 @@
       <version>0.2.3</version>
     </dependency>
     <dependency>
-    	<groupId>org.clojure</groupId>
-    	<artifactId>tools.reader</artifactId>
-    	<version>0.8.13</version>
+      <groupId>org.clojure</groupId>
+      <artifactId>tools.reader</artifactId>
+      <version>0.8.13</version>
+    </dependency>
+    <dependency>
+      <groupId>clj-stacktrace</groupId>
+      <artifactId>clj-stacktrace</artifactId>
+      <version>0.2.8</version>
     </dependency>
   </dependencies>
 

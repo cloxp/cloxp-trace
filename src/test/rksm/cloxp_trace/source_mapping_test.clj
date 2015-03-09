@@ -1,6 +1,6 @@
 (ns rksm.cloxp-trace.source-mapping-test
-  (:require [clojure.test :refer :all])
-  (:require [rksm.cloxp-trace.source-mapping :refer :all]))
+  (:require [clojure.test :refer :all]
+            [rksm.cloxp-trace.source-mapping :refer :all]))
 
 (defmacro check
   ([descr expr _ expected] `(testing ~descr (check ~expr _ ~expected)))
