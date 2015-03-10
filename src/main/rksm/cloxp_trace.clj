@@ -2,7 +2,8 @@
   (:require [clojure.zip :as z]
             [clojure.data.json :as json]
             [rksm.cloxp-trace.transform :as tfm]
-            [rksm.cloxp-trace.source-mapping :refer (with-source pos->ast-idx read-with-source-logger)]
+            [rksm.cloxp-trace.source-mapping :refer (with-source pos->ast-idx)]
+            [rksm.cloxp-source-reader.core :as src-rdr]
             [clojure.repl :as repl]
             [clojure.string :as s]
             [clj-stacktrace.core :as st]))
@@ -233,7 +234,7 @@
 (defn install-capture!
   [source & {ns :ns, name :name, :as spec}]
   (with-source source
-    (let [form (read-with-source-logger)
+    (let [form (src-rdr/read-with-source-logger source)
           existing (find-var (symbol (str (ns-name ns)) (str name)))
           spec-with-id (add-capture-record! form source spec existing)
           records-for-form (capture-records-for ns name)

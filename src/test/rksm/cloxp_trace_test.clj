@@ -34,9 +34,10 @@
 (deftest capture-function
   (testing "value and trace are captured"
     (is (= 3 (t/capture "no-loc" (+ 1 2))))
-    (let [[{v :value, t :trace}] (get (t/await-captures) "no-loc")]
+    (let [[{v :value, t :trace}] (get (t/await-captures) "no-loc")]      
       (is (= 3 v))
-      (is (every? #(= (type %) java.lang.StackTraceElement) t))
+      (is ["rksm.cloxp-trace-test" nil nil "clojure.core" "clojure.main"]
+          (-> (t/await-captures) (get "no-loc") first :trace (->> (take 5) (map :ns))))
       ; (is (= 23 (count t)))
       )))
 
@@ -222,6 +223,4 @@
  (t/await-captures)
 
  (run-tests *ns*)
- (eval form)
-
  )

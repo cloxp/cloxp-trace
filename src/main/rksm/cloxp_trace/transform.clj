@@ -1,6 +1,6 @@
 (ns rksm.cloxp-trace.transform
-  (:require [clojure.zip :as z])
-  (:require [clojure.pprint :refer :all])
+  (:require [clojure.zip :as z]
+            [clojure.pprint :refer :all])
   (:import (clojure.lang IPersistentVector IPersistentMap IPersistentList ISeq)))
 
 ; Thx @ Alex Miller! http://www.ibm.com/developerworks/library/j-treevisit/

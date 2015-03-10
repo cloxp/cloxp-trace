@@ -1,9 +1,8 @@
 (ns rksm.cloxp-trace.source-mapping
-  (:require [clojure.zip :as z])
-  (:require [rksm.cloxp-trace.transform :as tfm])
-  (:require [clojure.tools.reader :as tr])
-  (:require [clojure.tools.reader.reader-types :as trt])
-  (:require [clojure.string :as s]))
+  (:require [clojure.zip :as z]
+            [rksm.cloxp-trace.transform :as tfm]
+            [rksm.cloxp-source-reader.core :as src-rdr]
+            [clojure.string :as s]))
 
 (def ^{:dynamic true} *current-code*)
 
@@ -26,6 +25,7 @@
 
 ; -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
 ; pos mapping
+
 (defn pos->idx
   ([{:keys [line column] :as pos}]
    (if (nil? *current-code*)
@@ -47,14 +47,6 @@
          line (last lines)]
      {:column (inc (count line)) :line (count lines)}))
   ([idx source] (with-source source (idx->pos idx))))
-
-; -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
-; reading
-
-(defn read-with-source-logger
-  []
-  (let [rdr (trt/source-logging-push-back-reader (current-source))]
-    (tr/read rdr)))
 
 ; -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
 ; data structures for tree traversal / indexing
@@ -91,7 +83,7 @@
           (recur (z/next zppr) seen-zpprs ctxs))))))
 
 (comment
- (indexed-expr-list (read-with-source-logger "(aaa (bbb))"))
+ (indexed-expr-list (src-rdr/read-with-source-logger "(aaa (bbb))"))
  )
 
 (defn indexed-tree-zipper
@@ -105,7 +97,9 @@
 
 (defn indexed-tree-zipper-from-source
   []
-  (-> (read-with-source-logger)
+  (-> *current-code*
+    :source
+    src-rdr/read-with-source-logger
     indexed-expr-list
     indexed-tree-zipper))
 
