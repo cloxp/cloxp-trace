@@ -49,7 +49,7 @@
 (defn tfm-visit
   [zippd i ids-and-idxs]
   (if-let [[id _] (first (filter (fn [[_ idx]] (= i idx)) ids-and-idxs))]
-    (z/edit zippd (fn [n] `(rksm.cloxp-trace/capture ~id ~n)))
+    (z/edit zippd (fn [n] `(rksm.cloxp-trace.capturing/capture ~id ~n)))
     zippd))
 
 (defn insert-captures-into-expr
