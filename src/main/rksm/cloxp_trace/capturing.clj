@@ -2,7 +2,9 @@
   (:require [clojure.zip :as z]
             [clojure.data.json :as json]
             [rksm.cloxp-trace.transform :as tfm]
-            [rksm.cloxp-trace.source-mapping :refer (with-source pos->ast-idx)]
+            [rksm.cloxp-trace.source-mapping :refer [pos->ast-idx
+                                                     with-source
+                                                     indexed-expr-list]]
             [rksm.cloxp-source-reader.core :as src-rdr]
             [clojure.repl :as repl]
             [clojure.string :as s]
@@ -67,7 +69,7 @@
   [form source {:keys [name ns ast-idx pos], :as spec} existing-var]
   (let [type (type-of-def form)
         idx (or ast-idx (pos->ast-idx pos))
-        indexed-node (nth (rksm.cloxp-trace.source-mapping/indexed-expr-list form) idx {})
+        indexed-node (nth (indexed-expr-list form) idx {})
         id (make-id type form ns name idx)
         id-spec (merge spec {:id id,
                              :source source,
