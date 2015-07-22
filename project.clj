@@ -1,4 +1,4 @@
-(defproject org.rksm/cloxp-trace "0.1.9"
+(defproject org.rksm/cloxp-trace "0.1.10-SNAPSHOT"
   :description "Tracing for cloxp."
   :license {:name "MIT License"
             :url "http://opensource.org/licenses/MIT"}
