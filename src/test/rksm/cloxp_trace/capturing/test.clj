@@ -155,6 +155,7 @@
 ; -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
 
 (deftest install-via-position
+
   (testing "into def"
     (let [src "(defn def-for-capture [x] (+ x (- 23 x)))"]
       (t/install-capture! src :ns *ns* :name "def-for-capture" :pos {:column 32 :line 1})
@@ -221,5 +222,8 @@
 
  (t/await-captures)
 
- (run-tests *ns*)
+ (let [s (java.io.StringWriter.)]
+   (binding [*test-out* s] 
+     (test-ns *ns*)
+     (print (str s))))
  )

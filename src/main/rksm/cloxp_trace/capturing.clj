@@ -51,6 +51,11 @@
                     (= [(str ns-name) (str name)])))
           (vals @capture-records)))
 
+(defn- capture-records-for-capture-spec
+  [{:keys [ns name defmethod-matches] :as spec}]
+  (cond->> (capture-records-for ns name)
+    defmethod-matches (filter #(= defmethod-matches (:defmethod-matches %)))))
+
 (defn add-capture-record!
   [form source {:keys [name ns ast-idx pos], :as spec} existing-var]
   (let [type (type-of-def form)
@@ -225,7 +230,7 @@
     (let [form (src-rdr/read-with-source-logger source)
           existing (find-var (symbol (str (ns-name ns)) (str name)))
           spec-with-id (add-capture-record! form source spec existing)
-          records-for-form (capture-records-for ns name)
+          records-for-form (capture-records-for-capture-spec spec-with-id)
           ids-and-idxs (map (fn [{:keys [id ast-idx]}] [id ast-idx]) records-for-form)
           traced-form (tfm-for-capture form ids-and-idxs)]
       (if (and existing (not-empty (-> existing .getWatches)))
