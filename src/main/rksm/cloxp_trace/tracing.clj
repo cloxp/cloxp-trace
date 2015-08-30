@@ -3,6 +3,7 @@
   (:require [clojure.tools.trace :as trace]
             [clojure.string :refer [trim replace]]
             [clojure.zip :as z]
+            [clojure.repl :as repl]
             [medley.core :refer [map-vals]]))
 
 (defn trace-matching-ns
@@ -38,7 +39,7 @@
 (defn- parse-call-start-val
   "something like
   | | | | | (foo/bar #<print-arg>"
-  [val]
+  [^String val]
   (let [[_ depth name rest] (-> val
                               (replace #"\n" " ")
                               ((partial re-find #"^([\|\s]*)\(([^\s]+)\s+(.*)\)$")))]
@@ -50,7 +51,7 @@
 (defn- parse-call-result-val
   "something like
   | | | | | => true"
-  [val]
+  [^String val]
   (let [[_ printed-result] (re-find #"^[\|\s]*=>\s*(.*)$" val)]
     {:result printed-result}))
 
@@ -161,9 +162,21 @@
         timings (timings frames-with-children)]
     (frames-in-order frames-with-children)))
 
+(defn- process-trace-error
+  [e]
+  ; finish recording open calls that won't receive the result call due to the
+  ; throw. We pass in an empty result string as we don't maintain the depth
+  ; info that is needed when parsing the value...
+  (doseq [id (keys @*intermediate-trace-results*)] (cloxp-tracer id ""))
+  ; so we simply patch up values here
+  (let [e-str (str e "\n" (with-out-str (binding [*err* *out*] (repl/pst e)))) ]
+    (swap! *trace-results*
+           #(map-vals (fn [{:keys [result] :as trace}]
+                        (assoc trace :result (or result e-str))) %))))
+
 (defn trace*
   [trace-symbols fn-to-trace]
-  (if-not *trace-results*
+  (when-not *trace-results*
     (binding [*trace-results* (atom {})
               *intermediate-trace-results* (atom {})]
       (with-redefs-fn {#'trace/tracer cloxp-tracer}
@@ -171,6 +184,7 @@
           (try
             (prepare-trace trace-symbols)
             (fn-to-trace)
+            (catch Exception e (process-trace-error e))
             (finally (cleanup-trace trace-symbols)))))
       (process-trace-results @*trace-results*))))
 
